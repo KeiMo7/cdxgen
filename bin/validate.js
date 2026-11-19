@@ -39,6 +39,7 @@ import {
   importProtobomModule,
   isProtoBomPath,
 } from "../lib/inventory/protobomLoader.js";
+import { verifySbomChecksum } from "../lib/inventory/sbomView.js";
 import { getBomWithOras } from "../lib/managers/oci.js";
 import { parseStrictJson } from "../lib/parsers/strictJson.js";
 import { shouldFail, validateBomAdvanced } from "../lib/validator/index.js";
@@ -294,6 +295,16 @@ if (!isCycloneDxBom(bomJson)) {
     ),
   );
   process.exit(1);
+}
+
+const sbomChecksum = verifySbomChecksum(bomJson);
+if (sbomChecksum.present && !sbomChecksum.valid) {
+  console.error(
+    escapeControlCharacters(
+      "cdx-validate: cdx:sbom:checksum verification failed — the BOM is truncated, modified after generation, or corrupt.",
+    ),
+  );
+  process.exit(2);
 }
 
 if (inputIsLocalProtoBom && verificationRequested) {

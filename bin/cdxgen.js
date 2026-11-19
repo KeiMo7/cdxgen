@@ -132,6 +132,11 @@ import {
 import { resolvePluginBinary } from "../lib/inventory/plugins.js";
 import { importProtobomModule } from "../lib/inventory/protobomLoader.js";
 import {
+  applySbomChecksum,
+  applySbomView,
+  verifySbomChecksum,
+} from "../lib/inventory/sbomView.js";
+import {
   cleanupSourceDir,
   findGitRefForPurlVersion,
   gitClone,
@@ -445,6 +450,53 @@ const args = _yargs
     type: "boolean",
     description:
       "Include only the packages with required scope on the SBOM. Would set compositions.aggregate to incomplete unless --no-auto-compositions is passed.",
+  })
+  .option("sbom-trim", {
+    type: "boolean",
+    default: false,
+    description:
+      "Opt in to a purpose-scoped SBOM view. Deduplicates components and retains only the --sbom-scope selection, while recording excluded component identities and import evidence in the BOM metadata.",
+  })
+  .option("sbom-scope", {
+    choices: ["runtime", "development", "all"],
+    default: "runtime",
+    description:
+      "Scope retained by --sbom-trim: runtime (required/default), development/test/build, or all.",
+  })
+  .option("sbom-dedupe", {
+    type: "boolean",
+    default: false,
+    description:
+      "Merge duplicate component records by purl and non-conflicting hashes, preserving every dependency path and license/hash/evidence value.",
+  })
+  .option("sbom-incremental", {
+    alias: ["incremental", "sbom-baseline"],
+    type: "string",
+    description:
+      "Emit a CycloneDX delta against this baseline BOM. Components and dependency entries are stably sorted; removed refs and counts are recorded in metadata properties.",
+  })
+  .option("sbom-stable-sort", {
+    type: "boolean",
+    default: false,
+    description:
+      "Stably sort components by purl/coordinate/hash and sort dependencies by ref.",
+  })
+  .option("sbom-checksum", {
+    type: "boolean",
+    default: false,
+    description:
+      "Append cdx:sbom:checksum and cdx:sbom:checksumAlgorithm to the root properties for truncation/tamper detection. Applied automatically with --sbom-incremental.",
+  })
+  .option("sbom-identity-map", {
+    type: "string",
+    description:
+      "Path to a JSON identity map that canonicalizes purl/cpe values across ecosystems. Missing files or entries leave component IDs unchanged.",
+  })
+  .option("sbom-report", {
+    type: "boolean",
+    default: false,
+    description:
+      "Add license/hash gaps, ecosystem coverage, directness, and dedupe/trim statistics to the BOM metadata without trimming components.",
   })
   .option("fail-on-error", {
     type: "boolean",
@@ -1606,6 +1658,73 @@ const stringifyJson = (jsonPayload, jsonPretty) =>
     ? jsonPayload
     : JSON.stringify(jsonPayload, null, jsonPretty ? 2 : null);
 
+const loadSbomViewJsonFile = (filePath, label) => {
+  if (!filePath || typeof filePath !== "string") {
+    return undefined;
+  }
+  if (!safeExistsSync(filePath)) {
+    console.warn(`${label} '${filePath}' was not found; continuing unchanged.`);
+    return undefined;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (err) {
+    console.warn(
+      `${label} '${filePath}' could not be parsed (${err.message}); continuing unchanged.`,
+    );
+    return undefined;
+  }
+};
+
+const resolveSbomViewOptions = (options) => {
+  const baseline =
+    options.sbomIncremental && typeof options.sbomIncremental === "string"
+      ? loadSbomViewJsonFile(options.sbomIncremental, "Incremental baseline")
+      : undefined;
+  if (baseline) {
+    const checksum = verifySbomChecksum(baseline);
+    if (checksum.present && !checksum.valid) {
+      console.error(
+        `Incremental baseline checksum verification failed for '${options.sbomIncremental}'. The file is truncated, modified, or corrupt.`,
+      );
+      process.exit(1);
+    }
+  }
+  const identityMapData = options.sbomIdentityMap
+    ? loadSbomViewJsonFile(options.sbomIdentityMap, "SBOM identity map")
+    : undefined;
+  return {
+    ...options,
+    sbomIncrementalBaselineBom: baseline,
+    sbomIdentityMapData: identityMapData,
+  };
+};
+
+const reportSbomViewStats = (bomNSData, outputFile, options) => {
+  const stats = bomNSData?.sbomViewStats;
+  if (!stats || options?.quiet) {
+    return;
+  }
+  let outputBytes = stats.sizeAfterBytes;
+  if (outputFile && outputFile !== "-" && safeExistsSync(outputFile)) {
+    try {
+      outputBytes = fs.statSync(outputFile).size;
+    } catch {
+      // Keep the in-memory estimate when the output cannot be stat'ed.
+    }
+  }
+  console.log(
+    `SBOM view: components ${stats.componentsBefore} -> ${stats.componentsAfter}; ` +
+      `duplicates merged ${stats.duplicatesMerged}, excluded ${stats.excludedComponents}; ` +
+      `size ${stats.sizeBeforeBytes} -> ${outputBytes} bytes.`,
+  );
+  console.log(
+    `SBOM view: vulnerability match keys ${stats.matchKeysBefore} -> ${stats.matchKeysAfter} ` +
+      `(unchanged=${stats.matchKeysUnchanged}); imported edges ${stats.dependencyEdgesBefore} -> ` +
+      `${stats.dependencyEdgesAfter} (retained=${stats.dependencyEdgesUnchanged}).`,
+  );
+};
+
 const SIGNING_HINT =
   "Check that the private key is in PEM format and that SBOM_SIGN_ALGORITHM matches its key type.";
 
@@ -2510,10 +2629,26 @@ const writeCycloneDxOutput = (jsonFile, bomJson, options) => {
       }
     }
   }
+  if (bomNSData?.bomJson) {
+    const viewTarget = getInternalBom(bomNSData);
+    const view = applySbomView(viewTarget, resolveSbomViewOptions(options));
+    if (bomNSData.internalBomJson) {
+      bomNSData.internalBomJson = view.bomJson;
+    } else {
+      bomNSData.bomJson = view.bomJson;
+    }
+    bomNSData.sbomViewStats = view.stats;
+  }
   // The last post-postProcess mutation is done; at 2.0 the rendered document
   // is refreshed from the internal model once, before validation, signing
   // and writing. At 1.x this is a no-op.
   refreshRenderedBom(bomNSData, options);
+  if (
+    bomNSData?.bomJson &&
+    (options.sbomChecksum === true || options.sbomIncremental)
+  ) {
+    applySbomChecksum(bomNSData.bomJson);
+  }
   // Perform automatic validation
   if (options.validate && bomNSData?.bomJson) {
     thoughtLog("Wait, let's check the generated BOM file for any issues.");
@@ -2634,6 +2769,7 @@ const writeCycloneDxOutput = (jsonFile, bomJson, options) => {
       }
       // Later consumers, such as the Dependency-Track upload, get the signed BOM.
       bomNSData.bomJson = result.bomJson;
+      reportSbomViewStats(bomNSData, outputPlan.outputs.cyclonedx, options);
       if (bomNSData.nsMapping && Object.keys(bomNSData.nsMapping).length) {
         const nsFile = `${outputPlan.outputs.cyclonedx}.map`;
         safeWriteSync(nsFile, JSON.stringify(bomNSData.nsMapping));

@@ -319,6 +319,10 @@ cdxgen v13 ships several companion CLIs alongside the main `cdxgen` command. Eac
 - [`evinse`](EVINSE.md) - Enrich a BOM with evidence and produce a SaaSBOM.
 - [`tracebom`](TRACEBOM.md) - Generate a dynamic SBOM by tracing a running process.
 
+For large BOMs, see [Purpose-scoped and incremental SBOMs](SBOM_VIEWS.md) for
+`--sbom-trim`, stable sorting, delta output, identity mapping, license/hash gap
+reports, and the optional self-check checksum.
+
 # Supported Languages and Package Managers
 
 See our [Supported Project Types](https://cdxgen.github.io/cdxgen/#/PROJECT_TYPES) documentation

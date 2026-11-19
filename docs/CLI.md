@@ -498,6 +498,24 @@ Options:
                                                                                           "instrumentation", "filename"]
       --auto-compositions         Automatically set compositions when the BOM was filtered. Defaults to true
                                                                                                [boolean] [default: true]
+      --sbom-trim                 Opt in to a purpose-scoped SBOM view. Deduplicates components and retains only the
+                                  --sbom-scope selection, while recording excluded component identities and import
+                                  evidence in the BOM metadata.                                [boolean] [default: false]
+      --sbom-scope                Scope retained by --sbom-trim: runtime (required/default), development/test/build,
+                                  or all.                                    [choices: "runtime", "development", "all"] [default: "runtime"]
+      --sbom-dedupe               Merge duplicate component records by purl and non-conflicting hashes, preserving every
+                                  dependency path and license/hash/evidence value.            [boolean] [default: false]
+      --sbom-incremental          Emit a CycloneDX delta against this baseline BOM. Aliases: --incremental,
+                                  --sbom-baseline.                                                        [string]
+      --sbom-stable-sort          Stably sort components by purl/coordinate/hash and sort dependencies by ref.
+                                                                                              [boolean] [default: false]
+      --sbom-checksum             Append cdx:sbom:checksum and cdx:sbom:checksumAlgorithm to the root properties for
+                                  truncation/tamper detection. Applied automatically with --sbom-incremental.
+                                                                                              [boolean] [default: false]
+      --sbom-identity-map         Path to a JSON identity map that canonicalizes purl/cpe values across ecosystems.
+                                  Missing files or entries leave component IDs unchanged.                  [string]
+      --sbom-report               Add license/hash gaps, ecosystem coverage, directness, and dedupe/trim statistics to
+                                  the BOM metadata without trimming components.               [boolean] [default: false]
   -h, --help                      Show help                                                                    [boolean]
   -v, --version                   Show version number                                                          [boolean]
       --verbose                   Increase log verbosity. Repeat for more detail: --verbose shows per-file detail,

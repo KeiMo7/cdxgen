@@ -27,6 +27,12 @@ under `readLosses`, and `cdx-validate` prints their count on stderr. Set `CDXGEN
 deeper than 256 objects is cut at that depth, with one loss for each cut
 object.
 
+When the BOM carries `cdx:sbom:checksum` (written by `cdxgen --sbom-checksum`
+or incremental mode), `cdx-validate` recomputes the canonical-JSON digest
+before any other check. A mismatch exits with status 2 and names truncation,
+post-generation modification, or corruption. See [Purpose-scoped and
+incremental SBOMs](SBOM_VIEWS.md) for the digest scope.
+
 It is distributed as:
 
 - an npm entry point (`cdx-validate` — installed alongside `cdxgen`)
